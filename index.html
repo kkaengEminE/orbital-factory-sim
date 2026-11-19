@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}</style>
+<title>궤도 공장 시뮬레이터</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 관제 콘솔 — 위에 임무 궤적(캔버스)+단계 목록, 가운데 지상/우주 공정 비교, 아래 손익 계산 */
+:root {
+  --bg: #eef1f5;
+  --panel: #ffffff;
+  --ink: #16202e;
+  --muted: #5b6676;
+  --line: #d5dbe4;
+  --accent: #2a55d6;
+  --heat: #e0681f;
+  --good: #1f8a5b;
+  --bad: #c43d3d;
+  --space: #0f1726;
+  --earth: #2f6fa8;
+  --land: #3f8f5f;
+  --atmo: rgba(90,160,230,.22);
+  --orbit: rgba(150,170,200,.55);
+  --star: rgba(255,255,255,.7);
+  --solute: #7c8aa3;
+  --crystal: #2a55d6;
+  --deposit: #a07a4a;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c111b; --panel: #141c2a; --ink: #e5eaf2; --muted: #9aa6b8; --line: #263247;
+    --accent: #7c9cff; --heat: #ff8a3d; --good: #4cc48b; --bad: #ff6b6b;
+    --space: #070b13; --earth: #2b6296; --land: #357d52; --atmo: rgba(110,170,240,.2);
+    --orbit: rgba(150,170,200,.45); --star: rgba(255,255,255,.75);
+    --solute: #8794ab; --crystal: #7c9cff; --deposit: #c49a63;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c111b; --panel: #141c2a; --ink: #e5eaf2; --muted: #9aa6b8; --line: #263247;
+  --accent: #7c9cff; --heat: #ff8a3d; --good: #4cc48b; --bad: #ff6b6b;
+  --space: #070b13; --earth: #2b6296; --land: #357d52; --atmo: rgba(110,170,240,.2);
+  --orbit: rgba(150,170,200,.45); --star: rgba(255,255,255,.75);
+  --solute: #8794ab; --crystal: #7c9cff; --deposit: #c49a63;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px;
+}
+header { display: grid; gap: 6px; }
+h1 { font-size: clamp(24px, 3.4vw, 34px); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0; max-width: 68ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.pickers { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-size: 13px; color: var(--muted); }
+select, input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 10px; min-width: 0;
+}
+select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 14px; }
+.sec-head { display: grid; gap: 4px; }
+.sec-head p { margin: 0; color: var(--muted); max-width: 72ch; }
+
+/* 임무 */
+.mission { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; }
+.viewport { background: var(--space); border-radius: 10px; overflow: hidden; position: relative; min-width: 0; }
+#missionCanvas { display: block; width: 100%; aspect-ratio: 16 / 11; }
+.hud {
+  position: absolute; left: 12px; top: 10px; font-family: var(--font-mono); font-size: 12px; color: #c9d4e6;
+  display: grid; gap: 2px; pointer-events: none;
+}
+.stagecard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.now { display: grid; gap: 4px; }
+.now .tag { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.now h3 { margin: 0; font-size: 20px; }
+.now p { margin: 0; color: var(--muted); }
+.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.stages button {
+  width: 100%; text-align: left; font: inherit; color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; cursor: pointer;
+  display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; position: relative; overflow: hidden;
+}
+.stages button .n { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.stages button .d { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.stages button .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); width: 0; }
+.stages button[aria-current="step"] { border-color: var(--accent); }
+.stages button.done .n { color: var(--good); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  font: inherit; font-size: 14px; border-radius: 6px; padding: 7px 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:hover { border-color: var(--accent); }
+.speed { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+
+/* 공정 비교 */
+.compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.lab { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
+.lab-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lab-head h3 { margin: 0; font-size: 16px; }
+.chip { font-family: var(--font-mono); font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.lab canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--bg); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { display: grid; gap: 0; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+.v.good { color: var(--good); } .v.bad { color: var(--bad); }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+/* 손익 */
+.econ { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.slider { display: grid; gap: 4px; }
+.slider .row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.slider .row output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.assume { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.assume input { width: 100%; font-family: var(--font-mono); font-size: 14px; }
+.est { font-family: var(--font-mono); font-size: 11px; color: var(--heat); border: 1px solid var(--heat); border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+.verdict { display: grid; gap: 2px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line); }
+.verdict .big { font-family: var(--font-mono); font-size: 24px; font-variant-numeric: tabular-nums; }
+.verdict.good { border-color: var(--good); } .verdict.good .big { color: var(--good); }
+.verdict.bad { border-color: var(--bad); } .verdict.bad .big { color: var(--bad); }
+.bars { display: grid; gap: 10px; }
+.barrow { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 13px; }
+.track { height: 22px; background: var(--bg); border-radius: 4px; position: relative; overflow: hidden; display: flex; }
+.seg { height: 100%; }
+.track .lbl { position: absolute; right: 6px; top: 0; line-height: 22px; font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+footer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 4px; }
+
+@media (max-width: 860px) {
+  .mission, .econ { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .compare { grid-template-columns: minmax(0, 1fr); }
+  .assume { grid-template-columns: minmax(0, 1fr); }
+  .speed { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Microgravity manufacturing · 개념 시뮬레이션</span>
+    <h1>궤도 공장 시뮬레이터</h1>
+    <p class="lede">원료를 궤도로 올려 미세중력에서 한 단계를 가공하고, 다시 지구로 가져오는 과정을 단계별로 봅니다. 아래에서 같은 공정을 지상과 우주에서 나란히 돌려 비교하고, 한 번 다녀오는 비용과 제품 가치를 맞춰 볼 수 있습니다.</p>
+  </header>
+
+  <div class="pickers">
+    <div class="field">
+      <label for="scenarioSel">운송 방식</label>
+      <select id="scenarioSel"></select>
+    </div>
+    <div class="field">
+      <label for="productSel">만드는 제품</label>
+      <select id="productSel"></select>
+    </div>
+  </div>
+
+  <section aria-labelledby="mHead">
+    <div class="sec-head">
+      <h2 id="mHead">1. 올리고, 가공하고, 가져오기</h2>
+      <p id="scenarioSummary"></p>
+    </div>
+    <div class="mission">
+      <div class="viewport">
+        <canvas id="missionCanvas" aria-label="임무 궤적 애니메이션"></canvas>
+        <div class="hud"><span id="hudStage"></span><span id="hudAlt"></span><span id="hudTime"></span></div>
+      </div>
+      <div class="stagecard">
+        <div class="now">
+          <span class="tag" id="nowTag"></span>
+          <h3 id="nowName"></h3>
+          <p id="nowDesc"></p>
+        </div>
+        <ol class="stages" id="stageList"></ol>
+        <div class="controls">
+          <button class="btn primary" id="playBtn" type="button">일시정지</button>
+          <button class="btn" id="prevBtn" type="button">이전 단계</button>
+          <button class="btn" id="nextBtn" type="button">다음 단계</button>
+          <button class="btn" id="resetBtn" type="button">처음부터</button>
+          <label class="speed" for="speedSel">속도
+            <select id="speedSel">
+              <option value="0.5">0.5배</option>
+              <option value="1" selected>1배</option>
+              <option value="2">2배</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="pHead">
+    <div class="sec-head">
+      <h2 id="pHead">2. 가공 단계: 지상 vs 미세중력</h2>
+      <p id="processSummary"></p>
+    </div>
+    <div class="compare">
+      <div class="lab">
+        <div class="lab-head"><h3>지상 (중력 1g)</h3><span class="chip">침전 · 대류 있음</span></div>
+        <canvas id="groundCanvas" aria-label="지상 공정 시뮬레이션"></canvas>
+        <div class="stats" id="groundStats"></div>
+      </div>
+      <div class="lab">
+        <div class="lab-head"><h3>궤도 (미세중력)</h3><span class="chip">확산만 남음</span></div>
+        <canvas id="spaceCanvas" aria-label="우주 공정 시뮬레이션"></canvas>
+        <div class="stats" id="spaceStats"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" id="rerunBtn" type="button">가공 다시 돌리기</button>
+      <p class="note" id="processNote"></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="eHead">
+    <div class="sec-head">
+      <h2 id="eHead">3. 한 번 다녀오면 남는 장사인가</h2>
+      <p>제품 가치가 발사·귀환·가공 비용보다 커야 합니다. 비용 가정은 공개 가격과 업계 추정을 섞은 대략값이라 직접 고쳐 넣을 수 있습니다.</p>
+    </div>
+    <div class="econ">
+      <div class="card">
+        <div class="slider">
+          <div class="row"><label for="payload">실어 보내는 원료 무게</label><output id="payloadOut"></output></div>
+          <input type="range" id="payload" min="1" max="120" step="1">
+        </div>
+        <div class="slider">
+          <div class="row"><label for="value">팔 수 있는 제품의 kg당 가치</label><output id="valueOut"></output></div>
+          <input type="range" id="value" min="0" max="100" step="1">
+        </div>
+        <div class="slider">
+          <div class="row"><label for="yield">수율 (기준을 통과해 팔 수 있는 비율)</label><output id="yieldOut"></output></div>
+          <input type="range" id="yield" min="0" max="100" step="1">
+        </div>
+        <div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:6px">비용 가정 (달러)<span class="est">추정치</span></div>
+          <div class="assume">
+            <div class="field"><label for="fixedCost">임무 1회 고정비</label><input type="number" id="fixedCost" min="0" step="100000"></div>
+            <div class="field"><label for="upCost">올리기 kg당</label><input type="number" id="upCost" min="0" step="500"></div>
+            <div class="field"><label for="downCost">가져오기 kg당</label><input type="number" id="downCost" min="0" step="500"></div>
+          </div>
+        </div>
+        <p class="note" id="costNote"></p>
+      </div>
+      <div class="card">
+        <div class="verdict" id="verdict">
+          <span style="font-size:13px;color:var(--muted)">임무 1회 손익</span>
+          <span class="big" id="profitBig"></span>
+          <span class="note" id="profitKrw"></span>
+        </div>
+        <div class="bars">
+          <div class="barrow"><span>비용</span><div class="track" id="costTrack"></div></div>
+          <div class="barrow"><span>제품 가치</span><div class="track" id="revTrack"></div></div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--muted)"></i>고정비</span>
+          <span><i style="background:var(--heat)"></i>올리기</span>
+          <span><i style="background:var(--accent)"></i>가져오기</span>
+          <span><i style="background:var(--good)"></i>판매 가능 제품</span>
+        </div>
+        <dl class="kv">
+          <dt>가져오는 제품 중 팔 수 있는 양</dt><dd id="sellable"></dd>
+          <dt>본전이 되는 kg당 가치</dt><dd id="breakeven"></dd>
+          <dt>판매 1kg에 드는 운송·가공비</dt><dd id="costPerKg"></dd>
+        </dl>
+        <p class="note">본전 가치가 수백만 달러 단위로 나오면, 작은 병 하나에 큰 가치가 담기는 의약품 원료나 고성능 소재만 후보가 됩니다. 머크처럼 우주 실험에서 배운 것을 지상 공정에 옮기는 경우(지식 활용형)는 이 계산이 아니라 지상 생산 전체의 개선 효과로 따집니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>환율은 1달러 = 1,400원으로 가정했습니다. 공정 애니메이션은 현상을 보여주기 위한 개념 모델이며 실제 물성 계산이 아닙니다.</span>
+    <span>운송 방식·제품은 스크립트 위쪽 목록(SCENARIOS, PRODUCTS)에 한 항목을 더하면 화면에 추가됩니다.</span>
+  </footer>
+</div>
+
+<script>
+/* ===================== 데이터 목록: 여기에 항목을 추가하면 화면에 반영됨 ===================== */
+// stage.key 는 애니메이션 종류: launch | orbit | dock | process | undock | reentry | landing | splashdown
+const SCENARIOS = [
+  {
+    id: 'capsule',
+    name: '무인 캡슐 (바르다식)',
+    summary: '작은 캡슐을 위성 본체에 붙여 합승 로켓으로 올리고, 궤도에서 몇 주 자동으로 가공한 뒤 캡슐만 떨어뜨려 낙하산으로 회수합니다. 2024년 2월 유타에 착륙한 리토나비르 캡슐이 이 방식입니다.',
+    hasStation: false,
+    costs: { fixed: 8000000, up: 6500, down: 0, maxPayload: 120 },
+    costNote: '고정비는 위성 본체·캡슐 제작, 운영, 회수팀을 합친 업계 추정치입니다. 귀환 비용은 캡슐에 포함돼 있어 kg당 0으로 두었습니다. 올리기 단가는 팰컨9 합승 발사 공개가 수준입니다.',
+    stages: [
+      { key: 'launch', name: '발사', dur: 5, desc: '팰컨9 합승 발사에 캡슐을 끼워 올립니다. 다른 회사 위성들과 한 로켓을 나눠 탑니다.' },
+      { key: 'orbit', name: '궤도 진입 · 분리', dur: 4, desc: '로켓에서 분리된 뒤 위성 본체가 전력·자세·통신을 맡습니다. 캡슐은 본체에 붙어 있습니다.' },
+      { key: 'process', name: '미세중력 가공', dur: 9, desc: '원료를 녹였다가 천천히 굳힙니다. 사람 없이 미리 짠 순서대로 자동 진행되고, 실제로는 몇 주가 걸립니다.' },
+      { key: 'reentry', name: '재진입', dur: 5, desc: '캡슐만 분리해 대기권으로 들어옵니다. 마하 25 안팎의 속도라 열차폐막이 수천 도의 열을 견딥니다.' },
+      { key: 'landing', name: '낙하산 착륙 · 회수', dur: 5, desc: '낙하산을 펴고 사막 시험장에 내려앉으면 회수팀이 캡슐을 열어 시료를 꺼냅니다. 착륙 허가가 늦어지면 궤도에서 몇 달 기다리기도 합니다.' },
+    ],
+  },
+  {
+    id: 'station',
+    name: '국제우주정거장 경유',
+    summary: '정기 화물선에 장비와 원료를 실어 정거장으로 보내고, 정거장 안에서 가공한 뒤 지구로 돌아오는 화물선에 실어 바다로 내려보냅니다. 11.9km 광섬유와 키트루다 결정화 실험이 이 방식입니다.',
+    hasStation: true,
+    costs: { fixed: 1500000, up: 20000, down: 40000, maxPayload: 120 },
+    costNote: '정거장 상업 이용은 올리기보다 가져오기 단가가 높게 책정됩니다. 여기 숫자는 대략적인 가정치이고, 고정비는 장비 인증·우주비행사 작업 시간을 뭉뚱그린 값입니다.',
+    stages: [
+      { key: 'launch', name: '화물선 발사', dur: 5, desc: '보급 화물선에 가공 장비와 원료를 실어 올립니다. 다른 보급품과 함께 갑니다.' },
+      { key: 'dock', name: '정거장 도킹', dur: 4, desc: '화물선이 정거장에 붙고, 우주비행사가 장비를 꺼내 실험 칸에 설치합니다.' },
+      { key: 'process', name: '미세중력 가공', dur: 9, desc: '장비가 정거장 전력으로 돌아갑니다. 필요하면 우주비행사가 시료를 갈아 끼우거나 상태를 점검합니다.' },
+      { key: 'undock', name: '귀환선 분리', dur: 4, desc: '완성품을 지구로 돌아오는 화물선에 싣고 정거장에서 떨어집니다. 귀환 화물 공간이 좁아 자리 확보가 관건입니다.' },
+      { key: 'reentry', name: '재진입', dur: 5, desc: '화물선이 감속 분사 후 대기권으로 들어옵니다. 열차폐막이 열을 막습니다.' },
+      { key: 'splashdown', name: '해상 착수 · 회수', dur: 5, desc: '낙하산을 펴고 바다에 내려앉으면 회수선이 건져 올려 화물을 연구팀에 넘깁니다.' },
+    ],
+  },
+];
+
+// mode: crystal(결정 성장 비교) | fiber(광섬유 인출 비교)
+const PRODUCTS = [
+  {
+    id: 'drug', name: '의약품 원료 결정', mode: 'crystal',
+    valuePerKg: 5000000, yield: 60,
+    summary: '녹인 원료에서 결정이 자라는 모습입니다. 지상에서는 입자가 가라앉고 온도 차로 액체가 돌면서 결정끼리 엉기고 크기가 들쭉날쭉해집니다. 궤도에서는 원료가 확산으로만 고르게 공급돼 비슷한 크기로 자랍니다.',
+  },
+  {
+    id: 'fiber', name: '특수 광섬유 (ZBLAN)', mode: 'fiber',
+    valuePerKg: 1500000, yield: 40,
+    summary: '유리를 가느다란 실로 뽑는 모습입니다. 지상에서는 대류 때문에 실 속에 작은 결정이 더 자주 생기고, 이 결정이 빛을 흩뜨려 신호가 약해집니다. 판매 기준은 총 길이가 아니라 결함 없이 이어진 구간입니다.',
+  },
+  {
+    id: 'semi', name: '반도체 소재 씨앗 결정', mode: 'crystal',
+    valuePerKg: 500000, yield: 50,
+    summary: '우주에서 결함이 적은 씨앗 결정을 만든 뒤, 지상에서 이를 키우는 방식을 가정했습니다. 씨앗 결정 크기가 고르고 엉긴 덩어리가 적을수록 좋습니다.',
+  },
+];
+const KRW_PER_USD = 1400;
+/* ========================================================================================== */
+
+const $ = (id) => document.getElementById(id);
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let tokens = {};
+function readTokens() {
+  const cs = getComputedStyle(document.documentElement);
+  ['bg','panel','ink','muted','line','accent','heat','good','bad','space','earth','land','atmo','orbit','star','solute','crystal','deposit']
+    .forEach(k => tokens[k] = cs.getPropertyValue('--' + k).trim());
+}
+readTokens();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', readTokens);
+new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+function setupCanvas(cv) {
+  const o = { cv, ctx: cv.getContext('2d'), w: 0, h: 0 };
+  const fit = () => {
+    const r = cv.getBoundingClientRect(); const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    o.w = Math.max(1, r.width); o.h = Math.max(1, r.height);
+    cv.width = Math.round(o.w * dpr); cv.height = Math.round(o.h * dpr);
+    o.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  fit(); new ResizeObserver(fit).observe(cv);
+  return o;
+}
+const mc = setupCanvas($('missionCanvas'));
+const gc = setupCanvas($('groundCanvas'));
+const sc = setupCanvas($('spaceCanvas'));
+
+/* ---------- 선택 ---------- */
+let scenario = SCENARIOS[0];
+let product = PRODUCTS[0];
+SCENARIOS.forEach(s => $('scenarioSel').add(new Option(s.name, s.id)));
+PRODUCTS.forEach(p => $('productSel').add(new Option(p.name, p.id)));
+
+/* ---------- 임무 타임라인 ---------- */
+let T = 0, playing = !reduceMotion, speed = 1, lastIdx = -1;
+let starts = [], total = 0;
+function buildTimeline() {
+  starts = []; total = 0;
+  scenario.stages.forEach(s => { starts.push(total); total += s.dur; });
+  const ol = $('stageList'); ol.innerHTML = '';
+  scenario.stages.forEach((s, i) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.type = 'button';
+    b.innerHTML = `<span class="n">${String(i + 1).padStart(2, '0')}</span><span>${s.name}</span><span class="d"></span><span class="bar"></span>`;
+    b.addEventListener('click', () => { T = starts[i] + 0.001; lastIdx = -1; });
+    li.appendChild(b); ol.appendChild(li);
+  });
+  $('scenarioSummary').textContent = scenario.summary;
+  T = 0; lastIdx = -1;
+}
+function stageAt(t) {
+  let i = scenario.stages.length - 1;
+  for (let k = 0; k < starts.length; k++) if (t < starts[k] + scenario.stages[k].dur) { i = k; break; }
+  return { i, s: scenario.stages[i], p: Math.min(1, Math.max(0, (t - starts[i]) / scenario.stages[i].dur)) };
+}
+const ease = x => x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+
+const STARS = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() * 1.2 + .2 }));
+const OMEGA = 0.42, A0 = -Math.PI / 2 - 0.9;
+
+function drawMission() {
+  const { ctx, w, h } = mc; const c = tokens;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = c.space; ctx.fillRect(0, 0, w, h);
+  STARS.forEach(s => { ctx.fillStyle = c.star; ctx.globalAlpha = .35 + s.r * .4; ctx.fillRect(s.x * w, s.y * h, s.r, s.r); });
+  ctx.globalAlpha = 1;
+
+  const cx = w * 0.46, cy = h * 0.56, R = Math.min(w, h) * 0.24, O = R * 1.62;
+  // 대기
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.11, 0, Math.PI * 2); ctx.fillStyle = c.atmo; ctx.fill();
+  // 지구
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = c.earth; ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = c.land;
+  [[-.35, -.3, .42, .22], [.25, .1, .38, .28], [-.2, .45, .3, .14], [.4, -.45, .2, .12]].forEach(([dx, dy, rx, ry]) => {
+    ctx.beginPath(); ctx.ellipse(cx + dx * R, cy + dy * R, rx * R, ry * R, .4, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.restore();
+  // 궤도
+  ctx.setLineDash([3, 6]); ctx.strokeStyle = c.orbit; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, O, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = c.orbit; ctx.font = '11px ' + getComputedStyle(document.body).getPropertyValue('--font-mono');
+  ctx.fillText('저궤도 약 400~550km', cx + O * .72, cy - O * .72);
+
+  const { i, s, p } = stageAt(T);
+  // 각도: 착륙 단계에서는 멈춤
+  const reIdx = scenario.stages.findIndex(x => x.key === 'reentry');
+  const tAng = reIdx >= 0 ? Math.min(T, starts[reIdx] + scenario.stages[reIdx].dur) : T;
+  const ang = A0 + OMEGA * tAng;
+  let r = O;
+  if (s.key === 'launch') r = R + (O - R) * ease(p);
+  else if (s.key === 'reentry') r = O - (O - R) * ease(p);
+  else if (s.key === 'landing' || s.key === 'splashdown') r = R;
+
+  // 정거장
+  if (scenario.hasStation) {
+    let off = 0.5;
+    if (s.key === 'launch') off = 1.2 - 0.7 * p;
+    else if (s.key === 'dock') off = 0.5 * (1 - ease(p));
+    else if (s.key === 'process') off = 0;
+    else if (s.key === 'undock') off = -0.35 * ease(p);
+    else off = -0.35 + (OMEGA * (T - tAng));
+    const sa = ang + off;
+    drawStation(ctx, cx + Math.cos(sa) * O, cy + Math.sin(sa) * O, sa);
+  }
+
+  // 궤적 흔적
+  const px = cx + Math.cos(ang) * r, py = cy + Math.sin(ang) * r;
+  if (s.key === 'launch') {
+    ctx.strokeStyle = c.heat; ctx.globalAlpha = .5; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let k = 0; k <= 20; k++) {
+      const q = p * k / 20; const a2 = A0 + OMEGA * (starts[i] + q * s.dur); const r2 = R + (O - R) * ease(q);
+      const x = cx + Math.cos(a2) * r2, y = cy + Math.sin(a2) * r2; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  // 효과
+  const outward = Math.atan2(py - cy, px - cx);
+  if (s.key === 'launch') flame(ctx, px, py, outward + Math.PI, 14 + Math.random() * 6, c.heat);
+  if (s.key === 'reentry') {
+    const g = ctx.createRadialGradient(px, py, 2, px, py, 22);
+    g.addColorStop(0, c.heat); g.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, 22, 0, Math.PI * 2); ctx.fill();
+    // 플라즈마 꼬리 (진행 반대 방향)
+    const tail = ang - 0.25;
+    ctx.strokeStyle = c.heat; ctx.globalAlpha = .45; ctx.lineWidth = 3; ctx.beginPath();
+    ctx.moveTo(px, py); ctx.lineTo(cx + Math.cos(tail) * (r + 12), cy + Math.sin(tail) * (r + 12)); ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  if (s.key === 'process') {
+    const pulse = (T * 1.6) % 1;
+    ctx.strokeStyle = c.accent; ctx.globalAlpha = 1 - pulse; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, 8 + pulse * 22, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.fillStyle = '#dfe7ff'; ctx.fillText('가공 중', px + 14, py - 12);
+  }
+  // 캡슐
+  ctx.save(); ctx.translate(px, py); ctx.rotate(outward + Math.PI / 2);
+  ctx.fillStyle = '#e9eef6'; ctx.beginPath();
+  ctx.moveTo(-5, 4); ctx.lineTo(5, 4); ctx.lineTo(3, -5); ctx.lineTo(-3, -5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = c.heat; ctx.fillRect(-5, 4, 10, 2);
+  if (!scenario.hasStation && (s.key === 'orbit' || s.key === 'process')) { // 위성 본체 + 태양전지
+    ctx.fillStyle = '#9fb0c8'; ctx.fillRect(-4, -11, 8, 6);
+    ctx.fillStyle = '#4a6fb5'; ctx.fillRect(-16, -10, 10, 4); ctx.fillRect(6, -10, 10, 4);
+  }
+  ctx.restore();
+
+  // 착륙 인셋
+  if (s.key === 'landing' || s.key === 'splashdown') drawLandingInset(ctx, w, h, p, s.key === 'splashdown');
+
+  // HUD
+  const altKm = Math.round((r - R) / (O - R) * 450);
+  $('hudStage').textContent = `단계 ${i + 1}/${scenario.stages.length} · ${s.name}`;
+  $('hudAlt').textContent = `고도 약 ${Math.max(0, altKm)} km`;
+  $('hudTime').textContent = `진행 ${Math.round(T / total * 100)}%`;
+  return { i, s, p };
+}
+function flame(ctx, x, y, dir, len, col) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(dir);
+  const g = ctx.createLinearGradient(0, 0, len, 0); g.addColorStop(0, col); g.addColorStop(1, 'rgba(255,160,60,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(4, -3); ctx.lineTo(len, 0); ctx.lineTo(4, 3); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawStation(ctx, x, y, a) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2);
+  ctx.fillStyle = '#b8c4d6'; ctx.fillRect(-2, -9, 4, 18);
+  ctx.fillStyle = '#4a6fb5';
+  [-9, 5].forEach(yy => { ctx.fillRect(-18, yy, 14, 4); ctx.fillRect(4, yy, 14, 4); });
+  ctx.restore();
+  ctx.fillStyle = '#c9d4e6'; ctx.fillText('정거장', x + 14, y + 16);
+}
+function drawLandingInset(ctx, w, h, p, sea) {
+  const bw = Math.min(200, w * 0.36), bh = bw * 0.82, bx = w - bw - 12, by = h - bh - 12;
+  ctx.fillStyle = 'rgba(10,16,28,.85)'; ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = 'rgba(200,215,235,.35)'; ctx.strokeRect(bx + .5, by + .5, bw - 1, bh - 1);
+  const ground = by + bh - 18;
+  if (sea) {
+    ctx.fillStyle = '#245a8c'; ctx.fillRect(bx + 1, ground, bw - 2, bh - (ground - by) - 1);
+    ctx.strokeStyle = '#7fb3e6'; ctx.beginPath();
+    for (let x = 0; x <= bw - 2; x += 4) { const yy = ground + Math.sin((x + T * 30) / 8) * 1.5; x ? ctx.lineTo(bx + 1 + x, yy) : ctx.moveTo(bx + 1, yy); }
+    ctx.stroke();
+  } else { ctx.fillStyle = '#b08a5a'; ctx.fillRect(bx + 1, ground, bw - 2, bh - (ground - by) - 1); }
+  const desc = Math.min(1, p / 0.7);
+  const cxp = bx + bw / 2 + Math.sin(T * 2) * 4 * (1 - desc), cyp = by + 34 + (ground - by - 40) * ease(desc);
+  // 낙하산
+  ctx.fillStyle = '#ff9d4d'; ctx.beginPath(); ctx.arc(cxp, cyp - 26, 20, Math.PI, 0); ctx.fill();
+  ctx.strokeStyle = '#e6ecf5'; ctx.lineWidth = 1; ctx.beginPath();
+  [-20, -7, 7, 20].forEach(dx => { ctx.moveTo(cxp + dx, cyp - 26); ctx.lineTo(cxp, cyp - 4); }); ctx.stroke();
+  ctx.fillStyle = '#e9eef6'; ctx.fillRect(cxp - 7, cyp - 4, 14, 10);
+  if (p > 0.75) { // 회수
+    const vx = bx + bw - 28 - (bw * 0.35) * (1 - (p - .75) / .25);
+    ctx.fillStyle = sea ? '#e9eef6' : '#d8dee8';
+    if (sea) { ctx.beginPath(); ctx.moveTo(vx - 14, ground - 2); ctx.lineTo(vx + 14, ground - 2); ctx.lineTo(vx + 9, ground + 4); ctx.lineTo(vx - 9, ground + 4); ctx.fill(); ctx.fillRect(vx - 3, ground - 9, 6, 7); }
+    else { ctx.fillRect(vx - 12, ground - 9, 24, 7); ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(vx - 7, ground - 1, 2.5, 0, 7); ctx.arc(vx + 7, ground - 1, 2.5, 0, 7); ctx.fill(); }
+  }
+  ctx.fillStyle = '#c9d4e6'; ctx.fillText(sea ? '바다에 착수 → 회수선' : '사막 착륙 → 회수팀', bx + 8, by + 16);
+}
+
+function updateStagePanel(st) {
+  const items = $('stageList').querySelectorAll('button');
+  items.forEach((b, k) => {
+    const done = k < st.i, cur = k === st.i;
+    b.classList.toggle('done', done);
+    if (cur) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+    b.querySelector('.bar').style.width = (done ? 100 : cur ? st.p * 100 : 0) + '%';
+    b.querySelector('.d').textContent = done ? '완료' : cur ? Math.round(st.p * 100) + '%' : '';
+  });
+  if (st.i !== lastIdx) {
+    $('nowTag').textContent = `단계 ${st.i + 1} / ${scenario.stages.length}`;
+    $('nowName').textContent = st.s.name;
+    $('nowDesc').textContent = st.s.desc;
+    if (st.s.key === 'process' && lastIdx !== -2) startProcess();
+    lastIdx = st.i;
+  }
+}
+
+/* ---------- 공정 시뮬레이션 ---------- */
+function rand(a, b) { return a + Math.random() * (b - a); }
+class CrystalSim {
+  constructor(view, gravity) { this.v = view; this.g = gravity; this.reset(); }
+  reset() {
+    const { w, h } = this.v; this.t = 0; this.done = false;
+    this.parts = Array.from({ length: 300 }, () => ({ x: rand(0, 1), y: rand(0, 1) }));
+    this.cr = Array.from({ length: 7 }, (_, k) => ({ x: 0.14 + k * 0.12 + rand(-.03, .03), y: rand(.3, .6), a: 9, vy: 0 }));
+    this.deposit = new Array(60).fill(0);
+  }
+  step(dt) {
+    if (this.done) return; this.t += dt; if (this.t > 14) { this.done = true; }
+    const { w, h } = this.v; const g = this.g;
+    for (const q of this.parts) {
+      let vx = rand(-1, 1) * 0.06, vy = rand(-1, 1) * 0.06;
+      if (g) {
+        // 대류 롤 (스트림 함수 기반) + 침강
+        vx += 0.10 * Math.sin(Math.PI * q.x * 2) * Math.cos(Math.PI * q.y);
+        vy += -0.10 * Math.cos(Math.PI * q.x * 2) * Math.sin(Math.PI * q.y) + 0.07;
+      }
+      q.x += vx * dt; q.y += vy * dt;
+      if (q.x < 0) q.x = -q.x; if (q.x > 1) q.x = 2 - q.x; if (q.y < 0) q.y = -q.y;
+      if (q.y >= 0.985) { // 바닥 침전
+        const bin = Math.min(59, Math.floor(q.x * 60)); this.deposit[bin] += 1;
+        if (g && Math.random() < 0.06) this.cr.push({ x: q.x, y: 0.96, a: 2, vy: 0 }); // 바닥에서 새 잔결정
+        q.x = rand(0, 1); q.y = rand(0, .2); continue;
+      }
+      for (const c of this.cr) {
+        const rr = (Math.sqrt(c.a) * 0.9 + 1) / h + 0.008;
+        const dx = (q.x - c.x) * w / h, dy = q.y - c.y;
+        if (dx * dx + dy * dy < rr * rr) { c.a += 1.6; q.x = rand(0, 1); q.y = g ? rand(0, .25) : rand(0, 1); break; }
+      }
+    }
+    for (const c of this.cr) {
+      if (g) {
+        c.vy = Math.min(c.vy + dt * 0.04 * Math.sqrt(c.a) / 6, 0.12);
+        c.x += 0.05 * Math.sin(Math.PI * c.x * 2) * Math.cos(Math.PI * c.y) * dt;
+        c.y = Math.min(0.97, c.y + c.vy * dt);
+      } else { c.x += rand(-1, 1) * 0.002 * dt; c.y += rand(-1, 1) * 0.002 * dt; }
+    }
+    if (g) { // 닿은 결정끼리 엉김
+      for (let a = 0; a < this.cr.length; a++) for (let b = a + 1; b < this.cr.length; b++) {
+        const A = this.cr[a], B = this.cr[b]; if (!A || !B) continue;
+        const ra = Math.sqrt(A.a) / h, rb = Math.sqrt(B.a) / h;
+        const dx = (A.x - B.x) * w / h, dy = A.y - B.y;
+        if (Math.hypot(dx, dy) < (ra + rb) * 0.9 && A.y > .8) { A.a += B.a; this.cr.splice(b, 1); b--; }
+      }
+    }
+  }
+  draw() {
+    const { ctx, w, h } = this.v; const c = tokens;
+    ctx.clearRect(0, 0, w, h); ctx.fillStyle = c.bg; ctx.fillRect(0, 0, w, h);
+    if (this.g) { // 대류 화살표 힌트
+      ctx.strokeStyle = c.line; ctx.lineWidth = 1;
+      [[.25, .5], [.75, .5]].forEach(([x, y], k) => { ctx.beginPath(); ctx.ellipse(x * w, y * h, w * .17, h * .32, 0, 0, Math.PI * 2); ctx.stroke(); });
+      ctx.fillStyle = c.muted; ctx.font = '11px ' + getComputedStyle(document.body).getPropertyValue('--font-mono');
+      ctx.fillText('↓ g', 8, 16);
+    }
+    ctx.fillStyle = c.solute;
+    for (const q of this.parts) ctx.fillRect(q.x * w - 1, q.y * h - 1, 2, 2);
+    ctx.fillStyle = c.deposit;
+    this.deposit.forEach((d, k) => { const hh = Math.min(h * .12, d * 0.25); ctx.fillRect(k * w / 60, h - hh, w / 60 + .5, hh); });
+    for (const cr of this.cr) {
+      const r = Math.sqrt(cr.a) * 0.9 + 1;
+      ctx.save(); ctx.translate(cr.x * w, cr.y * h); ctx.rotate(cr.x * 5);
+      ctx.fillStyle = c.crystal; ctx.globalAlpha = .9;
+      ctx.beginPath(); for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+  stats() {
+    const sizes = this.cr.map(c => Math.sqrt(c.a));
+    const m = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+    const sd = Math.sqrt(sizes.reduce((a, b) => a + (b - m) ** 2, 0) / sizes.length);
+    const cv = sd / m * 100;
+    return [
+      { k: '결정 개수', v: sizes.length },
+      { k: '크기 편차', v: Math.round(cv) + '%', cls: cv > 35 ? 'bad' : cv < 20 ? 'good' : '' },
+      { k: '가라앉은 원료', v: this.deposit.reduce((a, b) => a + b, 0), cls: this.g ? 'bad' : '' },
+    ];
+  }
+}
+class FiberSim {
+  constructor(view, gravity) { this.v = view; this.g = gravity; this.reset(); }
+  reset() { this.t = 0; this.len = 0; this.defects = []; this.done = false; this.pulse = 0; }
+  step(dt) {
+    if (this.done) return; this.t += dt;
+    const dl = dt * 1.0; // km/s (화면 시간 기준)
+    const rate = this.g ? 0.95 : 0.14; // km당 결함 수 (개념값)
+    if (Math.random() < rate * dl) this.defects.push(this.len + Math.random() * dl);
+    this.len += dl; this.pulse = (this.pulse + dt * 0.35) % 1;
+    if (this.len >= 12) { this.len = 12; this.done = true; }
+  }
+  draw() {
+    const { ctx, w, h } = this.v; const c = tokens; const mono = getComputedStyle(document.body).getPropertyValue('--font-mono');
+    ctx.clearRect(0, 0, w, h); ctx.fillStyle = c.bg; ctx.fillRect(0, 0, w, h);
+    // 프리폼 + 가열로
+    const fx = 34, fy = h * 0.42;
+    ctx.fillStyle = c.muted; ctx.globalAlpha = .35; ctx.fillRect(10, fy - 22, 24, 44); ctx.globalAlpha = 1;
+    ctx.fillStyle = c.heat; ctx.globalAlpha = .35; ctx.fillRect(28, fy - 14, 10, 28); ctx.globalAlpha = 1;
+    ctx.fillStyle = c.muted; ctx.font = '11px ' + mono; ctx.fillText('가열로', 8, fy + 36);
+    // 섬유: 최근 4km만 보이게 스크롤
+    const viewKm = 4, x0 = fx + 6, x1 = w - 12, scale = (x1 - x0) / viewKm;
+    const start = Math.max(0, this.len - viewKm);
+    ctx.strokeStyle = c.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, fy); ctx.lineTo(x0 + (this.len - start) * scale, fy); ctx.stroke();
+    // 빛 펄스: 결함 지날 때마다 약해짐
+    const px = x0 + this.pulse * (this.len - start) * scale; const pk = start + this.pulse * (this.len - start);
+    const passed = this.defects.filter(d => d >= start && d <= pk).length;
+    const I = Math.pow(0.55, passed);
+    const g = ctx.createRadialGradient(px, fy, 0, px, fy, 10); g.addColorStop(0, c.accent); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = I; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, fy, 10, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    // 결함
+    for (const d of this.defects) {
+      if (d < start) continue; const x = x0 + (d - start) * scale;
+      ctx.fillStyle = c.bad; ctx.beginPath(); ctx.arc(x, fy, 3, 0, 7); ctx.fill();
+      ctx.strokeStyle = c.bad; ctx.globalAlpha = .5; ctx.lineWidth = 1;
+      for (let k = 0; k < 4; k++) { const a = -Math.PI / 2 + (k - 1.5) * .45; ctx.beginPath(); ctx.moveTo(x, fy); ctx.lineTo(x + Math.cos(a) * 12, fy + Math.sin(a) * 12); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
+    // km 구간 판정 바
+    const by = h * 0.72, bh = 14, kmW = (w - 24) / 12;
+    ctx.fillStyle = c.muted; ctx.fillText('1km 구간별 판정 (결함 0개면 판매 가능)', 12, by - 8);
+    for (let k = 0; k < 12; k++) {
+      const filled = Math.min(1, Math.max(0, this.len - k)); if (filled <= 0) { ctx.strokeStyle = c.line; ctx.strokeRect(12 + k * kmW + 1, by, kmW - 2, bh); continue; }
+      const bad = this.defects.some(d => d >= k && d < k + 1);
+      ctx.fillStyle = bad ? c.bad : c.good; ctx.globalAlpha = filled < 1 ? .4 : .85;
+      ctx.fillRect(12 + k * kmW + 1, by, (kmW - 2) * filled, bh); ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = c.muted; ctx.fillText(`누적 ${this.len.toFixed(1)} km`, w - 90, 16);
+  }
+  stats() {
+    const full = Math.floor(this.len); let ok = 0;
+    for (let k = 0; k < full; k++) if (!this.defects.some(d => d >= k && d < k + 1)) ok++;
+    const pct = full ? Math.round(ok / full * 100) : 0;
+    return [
+      { k: '뽑은 길이', v: this.len.toFixed(1) + ' km' },
+      { k: '빛 흩뜨리는 결정', v: this.defects.length + '개', cls: this.g ? 'bad' : 'good' },
+      { k: '판매 가능 길이', v: `${ok} km (${pct}%)`, cls: pct >= 70 ? 'good' : pct < 40 ? 'bad' : '' },
+    ];
+  }
+}
+let simG, simS;
+function startProcess() {
+  const Cls = product.mode === 'fiber' ? FiberSim : CrystalSim;
+  simG = new Cls(gc, true); simS = new Cls(sc, false);
+}
+function renderStats(el, list) {
+  el.innerHTML = list.map(s => `<div class="stat"><span class="k">${s.k}</span><span class="v ${s.cls || ''}">${s.v}</span></div>`).join('');
+}
+function applyProduct() {
+  $('processSummary').textContent = product.summary;
+  $('processNote').textContent = product.mode === 'fiber'
+    ? '빨간 점은 실 속에 생긴 작은 결정입니다. 파란 빛이 지나갈 때마다 약해집니다. 결함 빈도는 현상을 보여주기 위한 개념값입니다.'
+    : '회색 점은 녹은 원료, 파란 육각형은 자라는 결정, 갈색 띠는 바닥에 가라앉은 원료입니다. 크기 편차가 낮을수록 고른 결정입니다.';
+  startProcess();
+}
+
+/* ---------- 손익 ---------- */
+const valFromSlider = s => Math.round(Math.pow(10, 4 + 3 * s / 100) / 1000) * 1000; // $10K ~ $10M
+const sliderFromVal = v => Math.round((Math.log10(Math.max(1e4, v)) - 4) / 3 * 100);
+function usd(n) {
+  const a = Math.abs(n); const s = a >= 1e9 ? (a / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(0) + 'K' : a.toFixed(0);
+  return (n < 0 ? '−$' : '$') + s;
+}
+function krw(n) {
+  const v = n * KRW_PER_USD, a = Math.abs(v), sign = v < 0 ? '−' : '';
+  return a >= 1e8 ? `${sign}약 ${(a / 1e8).toFixed(1)}억 원` : `${sign}약 ${Math.round(a / 1e4).toLocaleString('ko-KR')}만 원`;
+}
+function applyScenarioCosts() {
+  $('fixedCost').value = scenario.costs.fixed; $('upCost').value = scenario.costs.up; $('downCost').value = scenario.costs.down;
+  $('payload').max = scenario.costs.maxPayload;
+  if (+$('payload').value > scenario.costs.maxPayload) $('payload').value = scenario.costs.maxPayload;
+  $('costNote').textContent = scenario.costNote;
+}
+function applyProductEcon() {
+  $('value').value = sliderFromVal(product.valuePerKg); $('yield').value = product.yield;
+}
+function calc() {
+  const kg = +$('payload').value, val = valFromSlider(+$('value').value), y = +$('yield').value / 100;
+  const fixed = Math.max(0, +$('fixedCost').value || 0), up = Math.max(0, +$('upCost').value || 0), down = Math.max(0, +$('downCost').value || 0);
+  const costUp = kg * up, costDown = kg * down, cost = fixed + costUp + costDown;
+  const sellKg = kg * y, rev = sellKg * val, profit = rev - cost;
+  $('payloadOut').textContent = kg + ' kg';
+  $('valueOut').textContent = usd(val) + ' / kg';
+  $('yieldOut').textContent = Math.round(y * 100) + '%';
+  $('profitBig').textContent = (profit >= 0 ? '+' : '') + usd(profit);
+  $('profitKrw').textContent = `${krw(profit)} · 비용 ${usd(cost)}, 제품 가치 ${usd(rev)}`;
+  $('verdict').className = 'verdict ' + (profit >= 0 ? 'good' : 'bad');
+  $('sellable').textContent = sellKg.toFixed(1) + ' kg';
+  $('breakeven').textContent = sellKg > 0 ? usd(cost / sellKg) + ' / kg' : '팔 수 있는 양 없음';
+  $('costPerKg').textContent = sellKg > 0 ? usd(cost / sellKg) : '—';
+  const max = Math.max(cost, rev, 1);
+  const pct = v => (v / max * 100) + '%';
+  $('costTrack').innerHTML = `<span class="seg" style="width:${pct(fixed)};background:var(--muted)"></span><span class="seg" style="width:${pct(costUp)};background:var(--heat)"></span><span class="seg" style="width:${pct(costDown)};background:var(--accent)"></span><span class="lbl">${usd(cost)}</span>`;
+  $('revTrack').innerHTML = `<span class="seg" style="width:${pct(rev)};background:var(--good)"></span><span class="lbl">${usd(rev)}</span>`;
+}
+['payload', 'value', 'yield', 'fixedCost', 'upCost', 'downCost'].forEach(id => $(id).addEventListener('input', calc));
+
+/* ---------- 이벤트 ---------- */
+$('scenarioSel').addEventListener('change', e => {
+  scenario = SCENARIOS.find(s => s.id === e.target.value); buildTimeline(); applyScenarioCosts(); calc();
+});
+$('productSel').addEventListener('change', e => {
+  product = PRODUCTS.find(p => p.id === e.target.value); applyProduct(); applyProductEcon(); calc();
+});
+function setPlaying(v) { playing = v; $('playBtn').textContent = playing ? '일시정지' : '재생'; }
+$('playBtn').addEventListener('click', () => { if (!playing && T >= total) { T = 0; lastIdx = -1; } setPlaying(!playing); });
+$('prevBtn').addEventListener('click', () => { const { i, p } = stageAt(T); const k = p < .15 ? Math.max(0, i - 1) : i; T = starts[k] + .001; lastIdx = -1; });
+$('nextBtn').addEventListener('click', () => { const { i } = stageAt(T); if (i < starts.length - 1) { T = starts[i + 1] + .001; lastIdx = -1; } });
+$('resetBtn').addEventListener('click', () => { T = 0; lastIdx = -1; setPlaying(true); });
+$('speedSel').addEventListener('change', e => speed = +e.target.value);
+$('rerunBtn').addEventListener('click', startProcess);
+
+/* ---------- 시작 ---------- */
+buildTimeline(); applyScenarioCosts(); applyProduct(); applyProductEcon(); calc();
+$('payload').value = 20; calc();
+setPlaying(playing);
+if (reduceMotion) { // 움직임 최소화: 공정은 결과까지 미리 계산해 정지 화면으로
+  for (let k = 0; k < 700; k++) { simG.step(0.02); simS.step(0.02); }
+}
+let last = performance.now(), statTick = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (playing) { T += dt * speed; if (T >= total) { T = total - 0.0001; setPlaying(false); } }
+  const st = drawMission(); updateStagePanel(st);
+  if (!reduceMotion || playing) { simG.step(dt * speed); simS.step(dt * speed); }
+  simG.draw(); simS.draw();
+  if ((statTick += dt) > 0.25) { statTick = 0; renderStats($('groundStats'), simG.stats()); renderStats($('spaceStats'), simS.stats()); }
+  requestAnimationFrame(frame);
+}
+renderStats($('groundStats'), simG.stats()); renderStats($('spaceStats'), simS.stats());
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
